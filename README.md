@@ -12,7 +12,7 @@ Email: test@gmail.com
 Password: 4t63pbpDf3YAvwE
 ```
 
-> **Note:** These credentials are provided for demonstration and assessment purposes only.
+> **Note:** These credentials are provided for demonstration only.
 
 Alternatively, you may create a new account through the registration page and complete the onboarding flow independently.
 
