@@ -1,3 +1,4 @@
+// app/(auth)/layout.tsx
 'use client';
 
 import { useEffect } from 'react';
@@ -19,7 +20,7 @@ export default function AuthLayout({
   }, [router]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#004051] p-4">
+    <div className="h-screen flex items-center justify-center bg-[#004051] p-4 overflow-hidden">
       {children}
     </div>
   );
