@@ -266,9 +266,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [router]);
 
-  // ✅ OPTIMIZED LOGOUT - Fast and snappy
+  // ============================================
+  // ✅ SUPER FAST OPTIMIZED LOGOUT
+  // ============================================
   const logout = useCallback(() => {
-    // 1. Clear React state immediately (synchronous)
+    // 1. Remove cookie FIRST - immediately invalidates session
+    removeCookie('access_token');
+    
+    // 2. Clear React state immediately
     setToken(null);
     setKycData(null);
     setKycStatus('not_submitted');
@@ -280,10 +285,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setPendingAction(null);
     hasLoadedData.current = false;
     
-    // 2. Clear cache (synchronous)
+    // 3. Clear cache
     invalidateAll();
     
-    // 3. Clear localStorage (synchronous - batched)
+    // 4. Clear localStorage
     const keysToRemove = [
       'access_token',
       'credit_assessment',
@@ -296,14 +301,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     ];
     keysToRemove.forEach(key => localStorage.removeItem(key));
     
-    // 4. Clear cookie (synchronous)
-    removeCookie('access_token');
-    
-    // 5. Show toast immediately
-    toast.success('Logged out');
-    
-    // 6. Navigate immediately using replace for faster navigation
+    // 5. Navigate immediately using replace
     router.replace('/login');
+    
+    // 6. Show toast
+    toast.success('Logged out');
   }, [router, invalidateAll]);
 
   // Submit KYC
