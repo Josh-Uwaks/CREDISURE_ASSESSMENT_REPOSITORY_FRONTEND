@@ -53,7 +53,7 @@ export default function UploadPage() {
             month: 'short', 
             year: 'numeric' 
           }),
-          size: '0.5 MB', // You can calculate this if needed
+          size: '0.5 MB',
         }));
         setUploadedFiles(formatted);
         setIsDataLoaded(true);
@@ -173,6 +173,8 @@ export default function UploadPage() {
         });
       }, 500);
 
+      // ✅ ACTUALLY UPLOAD THE FILE
+      await uploadAPI.uploadDocument(file, 'bank_statement');
       
       clearInterval(progressInterval);
       setUploadProgress(100);
