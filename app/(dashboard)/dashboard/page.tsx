@@ -8,7 +8,7 @@ import { useCache } from '@/context/CacheContext';
 import { KYCModal } from '@/components/KYCModal';
 import { AssessmentModal } from '@/components/AssessmentModal';
 import { LoanApplicationModal } from '@/components/LoanApplicationModal';
-import { KYCFormData, AssessmentHistory, DocumentUpload } from '@/types';
+import { KYCFormData, AssessmentHistory, LoanApplicationData, DocumentUpload } from '@/types';
 import { z } from 'zod';
 import { assessmentSchema } from '@/lib/validation';
 import { uploadAPI } from '@/lib/api';
@@ -25,9 +25,11 @@ import {
   FiCheckCircle,
   FiPlus,
   FiLoader,
+  FiDollarSign,
   FiCheck,
   FiX,
 } from 'react-icons/fi';
+import { FaMoneyBillWave } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
 // ====== TYPES ======
@@ -118,7 +120,7 @@ function JourneyStrip({ steps }: { steps: JourneyStep[] }) {
           <div key={step.id} className="relative z-10 flex flex-col items-center w-full">
             <div
               className={`
-                w-8 h-8 rounded-full flex items-center justify-center shrink-0border-2 bg-white
+                w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border-2 bg-white
                 ${step.status === 'completed' ? 'border-[#1EA537] bg-[#1EA537] text-white' : ''}
                 ${step.status === 'active' ? 'border-[#1EA537] text-[#1EA537]' : ''}
                 ${step.status === 'pending' ? 'border-[#E7E2D6] text-[#B5AF9C]' : ''}
@@ -133,7 +135,7 @@ function JourneyStrip({ steps }: { steps: JourneyStep[] }) {
             </div>
             <p
               className={`
-                mt-2.5 text-xs font-medium text-center leading-tight max-w-22
+                mt-2.5 text-xs font-medium text-center leading-tight max-w-[88px]
                 ${step.status === 'completed' ? 'text-[#0B3B2E]' : ''}
                 ${step.status === 'active' ? 'text-[#1EA537]' : ''}
                 ${step.status === 'pending' || step.status === 'blocked' ? 'text-[#B5AF9C]' : ''}
@@ -159,12 +161,11 @@ interface StatusNoticeProps {
 }
 
 function StatusNotice({ kycStatus, isKYCComplete, onVerify, onRefresh, isRefreshing }: StatusNoticeProps) {
-  // ✅ Updated: Check for pending status
   if (kycStatus === 'pending') {
     return (
       <div className="mb-6 bg-white border-l-4 border-[#B45309] rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start gap-3.5">
-          <div className="p-2 bg-[#B45309]/10 rounded-lg shrink-0">
+          <div className="p-2 bg-[#B45309]/10 rounded-lg flex-shrink-0">
             <FiClock className="text-[#B45309] w-4 h-4" />
           </div>
           <div>
@@ -181,12 +182,11 @@ function StatusNotice({ kycStatus, isKYCComplete, onVerify, onRefresh, isRefresh
     );
   }
 
-  // ✅ Updated: Check for rejected status
   if (kycStatus === 'rejected') {
     return (
       <div className="mb-6 bg-white border-l-4 border-red-500 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start gap-3.5">
-          <div className="p-2 bg-red-50 rounded-lg shrink-0">
+          <div className="p-2 bg-red-50 rounded-lg flex-shrink-0">
             <FiX className="text-red-500 w-4 h-4" />
           </div>
           <div>
@@ -207,12 +207,11 @@ function StatusNotice({ kycStatus, isKYCComplete, onVerify, onRefresh, isRefresh
     );
   }
 
-  // ✅ Updated: Check if not submitted
   if (!isKYCComplete && kycStatus === 'not_submitted') {
     return (
       <div className="mb-6 bg-white border-l-4 border-[#1EA537] rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start gap-3.5">
-          <div className="p-2 bg-[#1EA537]/10 rounded-lg shrink-0">
+          <div className="p-2 bg-[#1EA537]/10 rounded-lg flex-shrink-0">
             <FiAlertTriangle className="text-[#1EA537] w-4 h-4" />
           </div>
           <div>
@@ -233,7 +232,6 @@ function StatusNotice({ kycStatus, isKYCComplete, onVerify, onRefresh, isRefresh
     );
   }
 
-  // Verified - quiet confirmation
   return (
     <div className="mb-6 flex items-center justify-between text-xs text-[#8A8470] px-1">
       <span className="flex items-center gap-1.5">
@@ -411,7 +409,6 @@ function LoanSection({
   const isLoanUnderReview = loan && ['submitted', 'under_review'].includes(loan.status || '');
   const hasLoanApplication = loan && loan.status !== 'no_application' && loan.status !== null;
   
-  // ✅ Updated: Check KYC status properly
   const isEligible = isKYCComplete && hasUploadedDocument && hasAssessment && creditScore !== null && creditScore >= 600;
   const canApply = !hasLoanApplication || loan?.status === 'rejected' || loan?.status === 'completed';
 
@@ -434,7 +431,6 @@ function LoanSection({
     red: 'bg-[#B91C1C]/10 text-[#991B1B] border-[#B91C1C]/20',
   };
 
-  // Determine button state
   const showApplyButton = canApply && isEligible;
   const showIneligibleButton = !hasLoanApplication && !isEligible && creditScore !== null && creditScore < 600;
   const showNoAssessmentButton = !hasLoanApplication && !hasAssessment;
@@ -481,7 +477,6 @@ function LoanSection({
         </div>
       )}
 
-      {/* Eligibility Messages */}
       {!hasLoanApplication && (
         <>
           {!isKYCComplete && (
@@ -643,7 +638,7 @@ function UploadsSection({ files, onUploadClick }: UploadsSectionProps) {
               key={index}
               className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-[#F7F5F0] transition-colors"
             >
-              <div className="w-9 h-9 rounded-lg bg-[#1EA537]/10 flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-[#1EA537]/10 flex items-center justify-center flex-shrink-0">
                 <FiFile className="w-4 h-4 text-[#1EA537]" />
               </div>
               <div className="flex-1 min-w-0">
@@ -721,7 +716,7 @@ function HistorySection({ history, onHistoryClick }: HistorySectionProps) {
               onClick={onHistoryClick}
             >
               <div
-                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0${getRiskColor(
+                className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${getRiskColor(
                   item.risk_level
                 )}`}
               >
@@ -785,15 +780,11 @@ export default function DashboardPage() {
     submitAssessment,
     isLoading,
     refreshUser,
-    fetchKYCStatus,
     kycStatus,
     kycStatusInfo,
     assessment,
     history,
-    fetchHistory,
     createLoan,
-    fetchLoans,
-    fetchActiveLoan,
     loans,
   } = useAuth();
 
@@ -803,8 +794,6 @@ export default function DashboardPage() {
   const [isAssessmentLoading, setIsAssessmentLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasUploadedDocument, setHasUploadedDocument] = useState(false);
-  
-  // Loan Modal State
   const [isLoanModalOpen, setIsLoanModalOpen] = useState(false);
   const [isLoanLoading, setIsLoanLoading] = useState(false);
 
@@ -850,7 +839,7 @@ export default function DashboardPage() {
     return history.length > 0 || !!assessment;
   }, [history, assessment]);
 
-  // Load documents from API with caching
+  // Load documents only once
   useEffect(() => {
     const loadDocuments = async () => {
       if (!isAuthenticated) return;
@@ -870,7 +859,6 @@ export default function DashboardPage() {
       try {
         const docs = await uploadAPI.getDocuments();
         set('uploaded_documents', docs);
-        
         const formatted = docs.map((doc: DocumentUpload) => ({
           name: doc.file_name,
           date: formatDate(doc.created_at),
@@ -880,32 +868,11 @@ export default function DashboardPage() {
         setHasUploadedDocument(formatted.length > 0);
       } catch (error) {
         console.error('Error loading documents:', error);
-        const files = localStorage.getItem('uploaded_files');
-        if (files) {
-          try {
-            const parsed = JSON.parse(files);
-            setUploadedFiles(parsed);
-            setHasUploadedDocument(parsed.length > 0);
-          } catch {}
-        }
       }
     };
 
     loadDocuments();
   }, [isAuthenticated, get, set]);
-
-  // ✅ Updated: Treat pending as not complete but still active
-  const isKYCCompleteEffective = isKYCComplete || kycStatus === 'pending';
-
-  // Fetch KYC status and history
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchKYCStatus();
-      fetchHistory();
-      fetchLoans();
-      fetchActiveLoan();
-    }
-  }, [isAuthenticated, fetchKYCStatus, fetchHistory, fetchLoans, fetchActiveLoan]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -914,8 +881,9 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, router]);
 
+  const isKYCCompleteEffective = isKYCComplete || kycStatus === 'pending';
+
   const getFundingStatus = () => {
-    // ✅ Updated: Check KYC status properly
     if (isKYCComplete || kycStatus === 'pending') {
       if (creditScore && creditScore >= 700) {
         return { label: 'Eligible', color: 'text-[#1EA537]' };
@@ -936,7 +904,6 @@ export default function DashboardPage() {
 
   const funding = getFundingStatus();
 
-  // Get user name
   const getUserName = () => {
     if (kycStatusInfo?.full_name) return kycStatusInfo.full_name;
     if (!userInfo) return 'User';
@@ -948,13 +915,11 @@ export default function DashboardPage() {
 
   const userName = getUserName();
 
-  // Calculate KYC step status
   const kycStepStatus: JourneyStatus = isKYCComplete 
     ? 'completed' 
     : (kycStatus === 'pending' ? 'active' : 
        kycStatus === 'rejected' ? 'blocked' : 'pending');
 
-  // Journey steps with proper loan status checking
   const steps: JourneyStep[] = [
     {
       id: 'kyc',
@@ -985,7 +950,6 @@ export default function DashboardPage() {
 
   // Handlers
   const handleNewAssessment = () => {
-    // ✅ Updated: Check if KYC is not submitted or rejected
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       toast.error('Please complete KYC first to run an assessment');
       openKYCModal();
@@ -1014,7 +978,6 @@ export default function DashboardPage() {
   };
 
   const handleApplyLoan = () => {
-    // ✅ Updated: Check KYC status properly
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       toast.error('Please complete KYC first to apply for a loan');
       openKYCModal();
@@ -1067,7 +1030,6 @@ export default function DashboardPage() {
   };
 
   const handleUploadClick = () => {
-    // ✅ Updated: Check KYC status properly
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       toast.error('Please complete KYC first to upload documents');
       openKYCModal();
@@ -1082,7 +1044,7 @@ export default function DashboardPage() {
 
   const handleKYCSubmit = async (data: KYCFormData) => {
     await submitKYC(data);
-    await fetchKYCStatus();
+    await refreshUser();
   };
 
   const handleRefresh = async () => {
@@ -1109,7 +1071,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Show loading state using isLoading from AuthContext
   if (isLoading || !isAuthenticated) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#F7F5F0]">
@@ -1124,7 +1085,6 @@ export default function DashboardPage() {
   return (
     <>
       <main className="px-4 lg:px-8 py-8 max-w-6xl w-full mx-auto bg-[#F7F5F0]">
-        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-[#0B3B2E] tracking-tight">Dashboard</h1>
@@ -1132,7 +1092,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Status notice */}
         <StatusNotice
           kycStatus={kycStatus}
           isKYCComplete={isKYCComplete}
@@ -1141,7 +1100,6 @@ export default function DashboardPage() {
           isRefreshing={isRefreshing}
         />
 
-        {/* Credit score hero */}
         <div className="mb-6">
           <CreditHero
             creditScore={creditScore}
@@ -1155,12 +1113,10 @@ export default function DashboardPage() {
           />
         </div>
 
-        {/* Journey strip */}
         <div className="mb-6">
           <JourneyStrip steps={steps} />
         </div>
 
-        {/* Supporting cards */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <UploadsSection files={uploadedFiles} onUploadClick={handleUploadClick} />
           <HistorySection history={history} onHistoryClick={handleHistoryClick} />
@@ -1174,7 +1130,6 @@ export default function DashboardPage() {
           />
         </div>
 
-        {/* Footer */}
         <div className="mt-10 pt-5 border-t border-[#E7E2D6]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <p className="text-xs text-[#8A8470]">
@@ -1191,7 +1146,6 @@ export default function DashboardPage() {
         </div>
       </main>
 
-      {/* KYC Modal */}
       <KYCModal
         isOpen={showKYCModal}
         onSubmit={handleKYCSubmit}
@@ -1199,7 +1153,6 @@ export default function DashboardPage() {
         onClose={hideKYCModal}
       />
 
-      {/* Assessment Modal */}
       <AssessmentModal
         isOpen={isAssessmentModalOpen}
         onSubmit={handleAssessmentSubmit}
@@ -1207,7 +1160,6 @@ export default function DashboardPage() {
         onClose={() => setIsAssessmentModalOpen(false)}
       />
 
-      {/* Loan Application Modal */}
       <LoanApplicationModal
         isOpen={isLoanModalOpen}
         onSubmit={handleLoanSubmit}

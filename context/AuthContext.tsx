@@ -1,7 +1,7 @@
 // context/AuthContext.tsx
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { authAPI, kycAPI, assessmentAPI, loanAPI } from '@/lib/api';
@@ -58,7 +58,7 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const router = useRouter();
-  const { get, set, invalidate } = useCache();
+  const { get, set, invalidate, invalidateAll } = useCache();
   
   // Auth State
   const [token, setToken] = useState<string | null>(null);
@@ -79,6 +79,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Loan State
   const [loans, setLoans] = useState<LoanResponse[]>([]);
+
+  // ✅ Track if data has been loaded once
+  const hasLoadedData = useRef(false);
 
   // ============================================
   // DERIVED STATE
@@ -115,75 +118,88 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const hasSubmittedKYC = kycStatus !== 'not_submitted';
 
   // ============================================
+  // LOAD DATA - ONCE
+  // ============================================
+  const loadAllData = useCallback(async (forceRefresh: boolean = false) => {
+    // ✅ Skip if already loaded and not forcing refresh
+    if (hasLoadedData.current && !forceRefresh) return;
+    if (!isAuthenticated) return;
+
+    try {
+      // Load KYC Status
+      const cachedKYC = get<KYCStatusResponse>(CACHE_KEYS.KYC_STATUS);
+      if (cachedKYC && !forceRefresh) {
+        setKycStatusInfo(cachedKYC);
+        setKycStatus(cachedKYC.status);
+      } else {
+        const kycStatus = await kycAPI.getKYCStatus();
+        set(CACHE_KEYS.KYC_STATUS, kycStatus);
+        setKycStatusInfo(kycStatus);
+        setKycStatus(kycStatus.status);
+        if (kycStatus.exists && kycStatus.full_name) {
+          setKycData(prev => ({ ...prev, full_name: kycStatus.full_name } as KYCResponse));
+        }
+      }
+
+      // Load Assessment History
+      const cachedHistory = get<AssessmentHistory[]>(CACHE_KEYS.ASSESSMENT_HISTORY);
+      if (cachedHistory && cachedHistory.length > 0 && !forceRefresh) {
+        setHistory(cachedHistory);
+      } else {
+        const historyData = await assessmentAPI.getHistory();
+        set(CACHE_KEYS.ASSESSMENT_HISTORY, historyData);
+        setHistory(historyData);
+        localStorage.setItem('assessment_history', JSON.stringify(historyData));
+      }
+
+      // Load Loans
+      const cachedLoans = get<LoanResponse[]>(CACHE_KEYS.LOANS);
+      if (cachedLoans && cachedLoans.length > 0 && !forceRefresh) {
+        setLoans(cachedLoans);
+      } else {
+        const loansData = await loanAPI.getLoans();
+        set(CACHE_KEYS.LOANS, loansData);
+        setLoans(loansData);
+        localStorage.setItem('loans', JSON.stringify(loansData));
+      }
+
+      // Load Assessment from localStorage
+      const savedAssessment = localStorage.getItem('credit_assessment');
+      if (savedAssessment) {
+        try {
+          setAssessment(JSON.parse(savedAssessment));
+        } catch {}
+      }
+
+      hasLoadedData.current = true;
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+  }, [isAuthenticated, get, set]);
+
+  // ============================================
   // ACTIONS
   // ============================================
   
-  // 1. Fetch KYC Status - With Caching
+  // Refresh User - Force reload
+  const refreshUser = useCallback(async (forceRefresh: boolean = true): Promise<void> => {
+    await loadAllData(forceRefresh);
+  }, [loadAllData]);
+
+  // Fetch KYC Status (used by components)
   const fetchKYCStatus = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
-    // Check cache first
     if (!forceRefresh) {
       const cached = get<KYCStatusResponse>(CACHE_KEYS.KYC_STATUS);
       if (cached) {
         setKycStatusInfo(cached);
         setKycStatus(cached.status);
-        if (cached.exists && cached.full_name && kycData) {
-          setKycData({
-            ...kycData,
-            full_name: cached.full_name,
-          } as KYCResponse);
-        }
         return;
       }
     }
+    await loadAllData(true);
+  }, [get, loadAllData]);
 
-    try {
-      const status = await kycAPI.getKYCStatus();
-      set(CACHE_KEYS.KYC_STATUS, status);
-      setKycStatusInfo(status);
-      
-      setKycStatus(status.status);
-      
-      if (status.exists && status.status === 'verified') {
-        setShowKYCModal(false);
-        if (kycData) {
-          setKycData({
-            ...kycData,
-            status: 'verified',
-            full_name: status.full_name || kycData.full_name,
-          } as KYCResponse);
-        }
-      } else if (status.exists && status.status === 'pending') {
-        setShowKYCModal(false);
-        if (kycData) {
-          setKycData({
-            ...kycData,
-            status: 'pending',
-            full_name: status.full_name || kycData.full_name,
-          } as KYCResponse);
-        }
-      } else if (status.exists && status.status === 'rejected') {
-        setShowKYCModal(true);
-        if (kycData) {
-          setKycData({
-            ...kycData,
-            status: 'rejected',
-            full_name: status.full_name || kycData.full_name,
-          } as KYCResponse);
-        }
-      } else {
-        // status === 'not_submitted'
-        setKycData(null);
-        if (isAuthenticated) {
-          setTimeout(() => setShowKYCModal(true), 500);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching KYC status:', error);
-      setKycStatus('not_submitted');
-    }
-  }, [isAuthenticated, kycData, get, set]);
-
-  // 2. Fetch History - With Caching
+  // Fetch History (used by components)
   const fetchHistory = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
     if (!forceRefresh) {
       const cached = get<AssessmentHistory[]>(CACHE_KEYS.ASSESSMENT_HISTORY);
@@ -192,26 +208,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return;
       }
     }
+    await loadAllData(true);
+  }, [get, loadAllData]);
 
-    try {
-      const data = await assessmentAPI.getHistory();
-      setHistory(data);
-      set(CACHE_KEYS.ASSESSMENT_HISTORY, data);
-      localStorage.setItem('assessment_history', JSON.stringify(data));
-    } catch (error) {
-      console.error('Error fetching assessment history:', error);
-      const cached = localStorage.getItem('assessment_history');
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          setHistory(parsed);
-          set(CACHE_KEYS.ASSESSMENT_HISTORY, parsed);
-        } catch {}
-      }
-    }
-  }, [get, set]);
-
-  // 3. Fetch Loans - With Caching
+  // Fetch Loans (used by components)
   const fetchLoans = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
     if (!forceRefresh) {
       const cached = get<LoanResponse[]>(CACHE_KEYS.LOANS);
@@ -220,59 +220,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return;
       }
     }
+    await loadAllData(true);
+  }, [get, loadAllData]);
 
-    try {
-      const data = await loanAPI.getLoans();
-      setLoans(data);
-      set(CACHE_KEYS.LOANS, data);
-      localStorage.setItem('loans', JSON.stringify(data));
-    } catch (error) {
-      console.error('Error fetching loans:', error);
-      const cached = localStorage.getItem('loans');
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          setLoans(parsed);
-          set(CACHE_KEYS.LOANS, parsed);
-        } catch {}
-      }
-    }
-  }, [get, set]);
+  // Fetch Active Loan (placeholder)
+  const fetchActiveLoan = useCallback(async (): Promise<void> => {
+    return Promise.resolve();
+  }, []);
 
-  // 4. Refresh User - With Force Refresh Option
-  const refreshUser = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
-    try {
-      await fetchKYCStatus(forceRefresh);
-      await fetchHistory(forceRefresh);
-      await fetchLoans(forceRefresh);
-      
-      const saved = localStorage.getItem('credit_assessment');
-      if (saved) {
-        try {
-          setAssessment(JSON.parse(saved));
-        } catch {}
-      }
-    } catch (error) {
-      console.error('Error refreshing user data:', error);
-    }
-  }, [fetchKYCStatus, fetchHistory, fetchLoans]);
-
-  // 5. Load User Data
-  const loadUserData = useCallback(async () => {
-    try {
-      await refreshUser(false);
-      const saved = localStorage.getItem('credit_assessment');
-      if (saved) {
-        try {
-          setAssessment(JSON.parse(saved));
-        } catch {}
-      }
-    } catch (error) {
-      console.error('Error loading user data:', error);
-    }
-  }, [refreshUser]);
-
-  // 6. Login
+  // 5. Login
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
     try {
@@ -282,7 +238,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       
       setCookie('access_token', response.access_token, 7);
       
-      await loadUserData();
+      // Load all data after login
+      await loadAllData();
       
       toast.success('Welcome back! 👋');
       router.push('/dashboard');
@@ -293,9 +250,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [router, loadUserData]);
+  }, [router, loadAllData]);
 
-  // 7. Register
+  // 6. Register
   const register = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
     try {
@@ -311,7 +268,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [router]);
 
-  // 8. Logout - Clear Cache
+  // 7. Logout
   const logout = useCallback(() => {
     setToken(null);
     setKycData(null);
@@ -323,11 +280,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setShowKYCModal(false);
     setPendingAction(null);
     
-    // Clear cache
-    invalidate(CACHE_KEYS.KYC_STATUS);
-    invalidate(CACHE_KEYS.ASSESSMENT_HISTORY);
-    invalidate(CACHE_KEYS.LOANS);
-    invalidate(CACHE_KEYS.ASSESSMENT);
+    hasLoadedData.current = false; // ✅ Reset load flag
+    
+    invalidateAll();
     
     localStorage.removeItem('access_token');
     localStorage.removeItem('credit_assessment');
@@ -342,9 +297,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     
     toast.success('Logged out');
     router.push('/login');
-  }, [router, invalidate]);
+  }, [router, invalidateAll]);
 
-  // 9. Submit KYC - Invalidate Cache
+  // 8. Submit KYC
   const submitKYC = useCallback(async (data: KYCFormData) => {
     setIsKYCLoading(true);
     try {
@@ -374,7 +329,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [pendingAction, router, invalidate]);
 
-  // 10. Submit Assessment - Invalidate Cache
+  // 9. Submit Assessment
   const submitAssessment = useCallback(async (data: AssessmentFormData): Promise<void> => {
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       setShowKYCModal(true);
@@ -398,7 +353,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       localStorage.setItem('credit_assessment', JSON.stringify(result));
       
       invalidate(CACHE_KEYS.ASSESSMENT_HISTORY);
-      await fetchHistory(true);
+      await loadAllData(true); // ✅ Force refresh history
       
       toast.success('Assessment complete! 🎉');
     } catch (error: unknown) {
@@ -408,9 +363,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [kycStatus, fetchHistory, invalidate]);
+  }, [kycStatus, loadAllData, invalidate]);
 
-  // 11. Create Loan - Invalidate Cache
+  // 10. Create Loan
   const createLoan = useCallback(async (data: LoanApplicationData): Promise<LoanResponse> => {
     setIsLoading(true);
     try {
@@ -418,7 +373,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       toast.success('Loan application submitted successfully! 🎉');
       
       invalidate(CACHE_KEYS.LOANS);
-      await fetchLoans(true);
+      await loadAllData(true); // ✅ Force refresh loans
       
       return result;
     } catch (error: unknown) {
@@ -428,9 +383,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [fetchLoans, invalidate]);
+  }, [loadAllData, invalidate]);
 
-  // 12. Require KYC for actions
+  // 11. Require KYC for actions
   const requireKYC = useCallback((action: () => void) => {
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       setShowKYCModal(true);
@@ -444,12 +399,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [kycStatus]);
 
-  // 13. Open KYC Modal
+  // 12. Open KYC Modal
   const openKYCModal = useCallback(() => {
     setShowKYCModal(true);
   }, []);
 
-  // 14. Hide KYC Modal
+  // 13. Hide KYC Modal
   const hideKYCModal = useCallback(() => {
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       setShowKYCModal(false);
@@ -462,14 +417,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [kycStatus]);
 
-  // 15. Reset Assessment
+  // 14. Reset Assessment
   const resetAssessment = useCallback(() => {
     setAssessment(null);
     localStorage.removeItem('credit_assessment');
   }, []);
 
   // ============================================
-  // INITIALIZATION
+  // INITIALIZATION - Load data once
   // ============================================
   useEffect(() => {
     const init = async () => {
@@ -480,25 +435,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (!cookieToken) {
           setCookie('access_token', storedToken, 7);
         }
-        await loadUserData();
+        await loadAllData();
       }
       setIsLoading(false);
     };
 
     void init();
-  }, [loadUserData]);
+  }, [loadAllData]);
 
   // ============================================
   // CONTEXT VALUE
   // ============================================
   const value: AuthContextType = {
-    // Auth State
     token,
     userInfo,
     isAuthenticated,
     isLoading,
     
-    // KYC State
     kycData,
     isKYCComplete,
     showKYCModal,
@@ -507,16 +460,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     kycStatusInfo,
     hasSubmittedKYC,
     
-    // Assessment State
     assessment,
     history,
     activeTab,
     
-    // Loan State
     loans,
     activeLoan: null,
     
-    // Actions
     login,
     register,
     logout,
@@ -528,11 +478,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     hideKYCModal,
     resetAssessment,
     requireKYC,
-    refreshUser: () => refreshUser(true),
+    refreshUser,
     fetchKYCStatus,
     createLoan,
     fetchLoans,
-    fetchActiveLoan: async () => {},
+    fetchActiveLoan,
   };
 
   return (
@@ -542,9 +492,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 }
 
-// ============================================
-// HOOK
-// ============================================
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {

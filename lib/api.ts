@@ -133,7 +133,7 @@ export const uploadAPI = {
     formData.append('file', file);
     formData.append('document_type', documentType);
 
-    const response = await api.post('/upload', formData, {
+    const response = await api.post('/upload/', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
