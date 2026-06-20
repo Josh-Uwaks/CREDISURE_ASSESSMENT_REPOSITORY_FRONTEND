@@ -11,21 +11,23 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, userInfo, logout } = useAuth();
+  const { isAuthenticated, userInfo, logout, isLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
+    // ✅ Use replace for faster navigation
+    if (!isAuthenticated && !isLoading) {
+      router.replace('/login');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isLoading, router]);
 
-  if (!isAuthenticated) {
+  // Show loading state while checking auth
+  if (isLoading || !isAuthenticated) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#F7F5F0]">
         <div className="text-center">
           <div className="w-10 h-10 border-[3px] border-[#1EA537] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-[#8A8470] font-medium text-sm">Redirecting to login…</p>
+          <p className="text-[#8A8470] font-medium text-sm">Loading…</p>
         </div>
       </div>
     );
@@ -47,7 +49,7 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     await logout();
-    router.push('/login');
+    // ✅ No need to push here - logout already handles navigation
   };
 
   return (

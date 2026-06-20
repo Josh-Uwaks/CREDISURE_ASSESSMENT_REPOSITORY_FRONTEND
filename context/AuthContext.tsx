@@ -288,7 +288,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // 3. Clear cache
     invalidateAll();
     
-    // 4. Clear localStorage
+    // 4. Clear localStorage (batched)
     const keysToRemove = [
       'access_token',
       'credit_assessment',
@@ -304,8 +304,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // 5. Navigate immediately using replace
     router.replace('/login');
     
-    // 6. Show toast
-    toast.success('Logged out');
+    // 6. Show toast after navigation starts
+    setTimeout(() => {
+      toast.success('Logged out');
+    }, 100);
   }, [router, invalidateAll]);
 
   // Submit KYC
