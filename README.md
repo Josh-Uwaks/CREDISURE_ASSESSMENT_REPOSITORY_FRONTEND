@@ -50,6 +50,11 @@ This document covers:
 
 ## Demo Access
 
+### Live Application
+
+Frontend URL:  
+[CrediSure Assessment Live Demo](http://credisure-assessment-repository-frontend.onrender.com/)
+
 The application can be tested using the following credentials:
 
 ```text
