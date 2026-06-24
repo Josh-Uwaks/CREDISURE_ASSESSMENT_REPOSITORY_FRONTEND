@@ -4,25 +4,32 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { authAPI, kycAPI, assessmentAPI, loanAPI } from '@/lib/api';
-import { 
-  AssessmentResponse, 
-  AssessmentHistory, 
+import axios, { AxiosError } from 'axios';
+
+import { authAPI, kycAPI, assessmentAPI, loanAPI, clearAuthData } from '@/lib/api';
+import { KYCFormData, AssessmentFormData } from '@/lib/validation';
+import {
+  AssessmentResponse,
+  AssessmentHistory,
   KYCResponse,
   KYCStatusResponse,
   UserInfo,
   AuthContextType,
   LoanApplicationData,
   LoanResponse,
-  KYCStatus
+  KYCStatus,
 } from '@/types';
-import { KYCFormData, AssessmentFormData } from '@/lib/validation';
-import { AxiosError } from 'axios';
 import { useCache } from './CacheContext';
 
-// ============================================
-// COOKIE HELPERS
-// ============================================
+const isTokenExpired = (token: string): boolean => {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const exp = payload.exp || 0;
+    return Date.now() >= (exp * 1000) - 30000;
+  } catch {
+    return true;
+  }
+};
 
 const setCookie = (name: string, value: string, days: number = 7) => {
   const expires = new Date(Date.now() + days * 864e5).toUTCString();
@@ -33,10 +40,6 @@ const removeCookie = (name: string) => {
   document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
 };
 
-// ============================================
-// CACHE KEYS
-// ============================================
-
 const CACHE_KEYS = {
   KYC_STATUS: 'kyc_status',
   ASSESSMENT_HISTORY: 'assessment_history',
@@ -44,14 +47,8 @@ const CACHE_KEYS = {
   ASSESSMENT: 'credit_assessment',
 };
 
-// ============================================
-// CONTEXT
-// ============================================
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// ============================================
-// PROVIDER
-// ============================================
 interface AuthProviderProps {
   children: React.ReactNode;
 }
@@ -59,33 +56,23 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const router = useRouter();
   const { get, set, invalidate, invalidateAll } = useCache();
-  
-  // Auth State
+
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<'assessment' | 'upload' | null>(null);
-  
-  // KYC State
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [kycData, setKycData] = useState<KYCResponse | null>(null);
   const [showKYCModal, setShowKYCModal] = useState(false);
   const [isKYCLoading, setIsKYCLoading] = useState(false);
   const [kycStatus, setKycStatus] = useState<KYCStatus>('not_submitted');
   const [kycStatusInfo, setKycStatusInfo] = useState<KYCStatusResponse | null>(null);
-  
-  // Assessment State
   const [assessment, setAssessment] = useState<AssessmentResponse | null>(null);
   const [history, setHistory] = useState<AssessmentHistory[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'history'>('overview');
 
-  // Loan State
   const [loans, setLoans] = useState<LoanResponse[]>([]);
-
-  // Track if data has been loaded once
   const hasLoadedData = useRef(false);
 
-  // ============================================
-  // DERIVED STATE
-  // ============================================
   const userInfo = useMemo((): UserInfo => {
     if (!token) return { email: 'User', id: null, firstName: 'User' };
     try {
@@ -113,16 +100,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [token]);
 
-  const isAuthenticated = !!token;
+  const isAuthenticated = !!token && !isTokenExpired(token);
   const isKYCComplete = kycStatus === 'verified';
   const hasSubmittedKYC = kycStatus !== 'not_submitted';
 
-  // ============================================
-  // LOAD DATA - ONCE
-  // ============================================
-  const loadAllData = useCallback(async (forceRefresh: boolean = false) => {
-    if (hasLoadedData.current && !forceRefresh) return;
-    if (!isAuthenticated) return;
+  const loadAllData = useCallback(async (forceRefresh: boolean = false, authToken?: string | null) => {
+    // ✅ Use provided token or current token
+    const tokenToUse = authToken !== undefined ? authToken : token;
+    
+    // ✅ Debug logging
+    console.log('[AuthContext] loadAllData called:', { 
+      forceRefresh, 
+      hasToken: !!tokenToUse, 
+      isAuthenticated: !!tokenToUse && !isTokenExpired(tokenToUse || '')
+    });
+    
+    // ✅ Check token validity
+    if (!tokenToUse || isTokenExpired(tokenToUse)) {
+      console.log('[AuthContext] No valid token, skipping load');
+      return;
+    }
+    
+    if (hasLoadedData.current && !forceRefresh) {
+      console.log('[AuthContext] Data already loaded, skipping');
+      return;
+    }
 
     try {
       // Load KYC Status
@@ -171,21 +173,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       hasLoadedData.current = true;
+      console.log('[AuthContext] Data loaded successfully');
     } catch (error) {
-      console.error('Error loading data:', error);
+      // ✅ Handle 401 errors properly
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        console.log('[AuthContext] 401 error in loadAllData - clearing auth');
+        clearAuthData();
+        setToken(null);
+        hasLoadedData.current = false;
+        setIsLoading(false);
+        router.replace('/login');
+        return;
+      }
+      console.error('[AuthContext] Error loading data:', error);
     }
-  }, [isAuthenticated, get, set]);
+  }, [token, get, set, router]);
 
-  // ============================================
-  // ACTIONS
-  // ============================================
-  
-  // Refresh User
   const refreshUser = useCallback(async (): Promise<void> => {
     await loadAllData(true);
   }, [loadAllData]);
 
-  // Fetch KYC Status
   const fetchKYCStatus = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
     if (!forceRefresh) {
       const cached = get<KYCStatusResponse>(CACHE_KEYS.KYC_STATUS);
@@ -198,7 +205,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await loadAllData(true);
   }, [get, loadAllData]);
 
-  // Fetch History
   const fetchHistory = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
     if (!forceRefresh) {
       const cached = get<AssessmentHistory[]>(CACHE_KEYS.ASSESSMENT_HISTORY);
@@ -210,7 +216,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await loadAllData(true);
   }, [get, loadAllData]);
 
-  // Fetch Loans
   const fetchLoans = useCallback(async (forceRefresh: boolean = false): Promise<void> => {
     if (!forceRefresh) {
       const cached = get<LoanResponse[]>(CACHE_KEYS.LOANS);
@@ -222,23 +227,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await loadAllData(true);
   }, [get, loadAllData]);
 
-  // Fetch Active Loan (placeholder)
   const fetchActiveLoan = useCallback(async (): Promise<void> => {
     return Promise.resolve();
   }, []);
 
-  // Login
   const login = useCallback(async (email: string, password: string) => {
+    console.log('[AuthContext] Login started');
     setIsLoading(true);
     try {
       const response = await authAPI.login({ email, password });
-      setToken(response.access_token);
-      localStorage.setItem('access_token', response.access_token);
+      const newToken = response.access_token;
       
-      setCookie('access_token', response.access_token, 7);
+      // ✅ Set token in state
+      setToken(newToken);
       
-      await loadAllData();
+      // ✅ Set in localStorage
+      localStorage.setItem('access_token', newToken);
       
+      // ✅ Set cookie
+      setCookie('access_token', newToken, 7);
+      
+      // ✅ Load data with the token directly (avoid race condition)
+      await loadAllData(false, newToken);
+      
+      console.log('[AuthContext] Login successful');
       toast.success('Welcome back! 👋');
       router.push('/dashboard');
     } catch (error: unknown) {
@@ -250,7 +262,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [router, loadAllData]);
 
-  // Register
   const register = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
     try {
@@ -266,14 +277,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [router]);
 
-  // ============================================
-  // ✅ SUPER FAST OPTIMIZED LOGOUT
-  // ============================================
   const logout = useCallback(() => {
-    // 1. Remove cookie FIRST - immediately invalidates session
+    console.log('[AuthContext] Logging out');
+    
+    // 1. Clear cookie
     removeCookie('access_token');
     
-    // 2. Clear React state immediately
+    // 2. Clear React state
     setToken(null);
     setKycData(null);
     setKycStatus('not_submitted');
@@ -284,11 +294,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setShowKYCModal(false);
     setPendingAction(null);
     hasLoadedData.current = false;
+    setAuthInitialized(false);
     
     // 3. Clear cache
     invalidateAll();
     
-    // 4. Clear localStorage (batched)
+    // 4. Clear localStorage
     const keysToRemove = [
       'access_token',
       'credit_assessment',
@@ -301,16 +312,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     ];
     keysToRemove.forEach(key => localStorage.removeItem(key));
     
-    // 5. Navigate immediately using replace
+    // 5. Navigate
     router.replace('/login');
     
-    // 6. Show toast after navigation starts
     setTimeout(() => {
       toast.success('Logged out');
     }, 100);
   }, [router, invalidateAll]);
 
-  // Submit KYC
   const submitKYC = useCallback(async (data: KYCFormData) => {
     setIsKYCLoading(true);
     try {
@@ -340,7 +349,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [pendingAction, router, invalidate]);
 
-  // Submit Assessment
   const submitAssessment = useCallback(async (data: AssessmentFormData): Promise<void> => {
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       setShowKYCModal(true);
@@ -376,7 +384,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [kycStatus, loadAllData, invalidate]);
 
-  // Create Loan
   const createLoan = useCallback(async (data: LoanApplicationData): Promise<LoanResponse> => {
     setIsLoading(true);
     try {
@@ -396,7 +403,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [loadAllData, invalidate]);
 
-  // Require KYC for actions
   const requireKYC = useCallback((action: () => void) => {
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       setShowKYCModal(true);
@@ -410,12 +416,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [kycStatus]);
 
-  // Open KYC Modal
   const openKYCModal = useCallback(() => {
     setShowKYCModal(true);
   }, []);
 
-  // Hide KYC Modal
   const hideKYCModal = useCallback(() => {
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       setShowKYCModal(false);
@@ -428,35 +432,77 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [kycStatus]);
 
-  // Reset Assessment
   const resetAssessment = useCallback(() => {
     setAssessment(null);
     localStorage.removeItem('credit_assessment');
   }, []);
 
-  // ============================================
-  // INITIALIZATION
-  // ============================================
   useEffect(() => {
     const init = async () => {
-      const storedToken = localStorage.getItem('access_token');
-      if (storedToken) {
-        setToken(storedToken);
-        const cookieToken = document.cookie.split('; ').find(row => row.startsWith('access_token='));
-        if (!cookieToken) {
-          setCookie('access_token', storedToken, 7);
+      console.log('[AuthContext] Initializing...');
+      let finalToken: string | null = null;
+      
+      try {
+        const storedToken = localStorage.getItem('access_token');
+        console.log('[AuthContext] Stored token exists:', !!storedToken);
+        
+        if (storedToken) {
+          // ✅ Check if token is expired
+          if (isTokenExpired(storedToken)) {
+            console.log('[AuthContext] Token expired, clearing');
+            localStorage.removeItem('access_token');
+            removeCookie('access_token');
+            setToken(null);
+            setIsLoading(false);
+            setAuthInitialized(true);
+            // Don't redirect here - let middleware handle it
+            return;
+          }
+          
+          // ✅ Token is valid
+          finalToken = storedToken;
+          setToken(finalToken);
+          
+          // ✅ Ensure cookie exists
+          const cookieToken = document.cookie.split('; ').find(row => row.startsWith('access_token='));
+          if (!cookieToken) {
+            setCookie('access_token', finalToken, 7);
+          }
+          
+          // ✅ Load data with the token (avoid race condition)
+          await loadAllData(false, finalToken);
+        } else {
+          console.log('[AuthContext] No token found');
+          // ✅ No token - clear cookie just in case
+          removeCookie('access_token');
         }
-        await loadAllData();
+      } catch (error) {
+        console.error('[AuthContext] Initialization error:', error);
+      } finally {
+        // ✅ ALWAYS set isLoading to false
+        setIsLoading(false);
+        setAuthInitialized(true);
+        console.log('[AuthContext] Initialization complete, isLoading:', false);
       }
-      setIsLoading(false);
     };
 
     void init();
   }, [loadAllData]);
 
-  // ============================================
-  // CONTEXT VALUE
-  // ============================================
+  useEffect(() => {
+    if (!isAuthenticated || !authInitialized) return;
+
+    const interval = setInterval(() => {
+      const currentToken = localStorage.getItem('access_token');
+      if (currentToken && isTokenExpired(currentToken)) {
+        console.log('[AuthContext] Token expired during session - logging out');
+        logout();
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated, authInitialized, logout]);
+
   const value: AuthContextType = {
     token,
     userInfo,

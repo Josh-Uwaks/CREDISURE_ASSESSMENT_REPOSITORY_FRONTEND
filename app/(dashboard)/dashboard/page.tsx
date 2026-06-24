@@ -1,7 +1,7 @@
 // app/(dashboard)/dashboard/page.tsx
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useCache } from '@/context/CacheContext';
@@ -12,6 +12,7 @@ import { KYCFormData, AssessmentHistory, LoanApplicationData, DocumentUpload } f
 import { z } from 'zod';
 import { assessmentSchema } from '@/lib/validation';
 import { uploadAPI } from '@/lib/api';
+import axios from 'axios';
 import {
   FiShield,
   FiUpload,
@@ -25,11 +26,9 @@ import {
   FiCheckCircle,
   FiPlus,
   FiLoader,
-  FiDollarSign,
   FiCheck,
   FiX,
 } from 'react-icons/fi';
-import { FaMoneyBillWave } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
 // ====== TYPES ======
@@ -766,6 +765,9 @@ function HistorySection({ history, onHistoryClick }: HistorySectionProps) {
 // ====== MAIN DASHBOARD COMPONENT ======
 
 export default function DashboardPage() {
+  // ✅ Debug logging
+  console.log('[Dashboard] Rendering...');
+  
   const router = useRouter();
   const { get, set } = useCache();
   const {
@@ -788,6 +790,14 @@ export default function DashboardPage() {
     loans,
   } = useAuth();
 
+  // ✅ Debug auth state
+  console.log('[Dashboard] Auth state:', { 
+    isLoading, 
+    isAuthenticated, 
+    hasToken: !!localStorage.getItem('access_token'),
+    kycStatus
+  });
+
   // State
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isAssessmentModalOpen, setIsAssessmentModalOpen] = useState(false);
@@ -796,6 +806,24 @@ export default function DashboardPage() {
   const [hasUploadedDocument, setHasUploadedDocument] = useState(false);
   const [isLoanModalOpen, setIsLoanModalOpen] = useState(false);
   const [isLoanLoading, setIsLoanLoading] = useState(false);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // ✅ LOADING TIMEOUT - Prevents infinite loading
+  useEffect(() => {
+    console.log('[Dashboard] Loading timeout check:', { isDataLoaded, isLoading });
+    
+    const timeout = setTimeout(() => {
+      if (!isDataLoaded && !isLoading) {
+        console.warn('[Dashboard] Loading timed out!');
+        setIsDataLoaded(true);
+        setLoadError('Loading took too long. Please refresh the page.');
+        toast.error('Loading took too long. Please refresh.');
+      }
+    }, 15000); // 15 seconds timeout
+
+    return () => clearTimeout(timeout);
+  }, [isDataLoaded, isLoading]);
 
   // Get the latest assessment from history (most recent first)
   const latestHistoryItem = useMemo(() => {
@@ -839,25 +867,33 @@ export default function DashboardPage() {
     return history.length > 0 || !!assessment;
   }, [history, assessment]);
 
-  // Load documents only once
+  // Load documents
   useEffect(() => {
     const loadDocuments = async () => {
-      if (!isAuthenticated) return;
-      
-      const cachedDocs = get<DocumentUpload[]>('uploaded_documents');
-      if (cachedDocs) {
-        const formatted = cachedDocs.map((doc: DocumentUpload) => ({
-          name: doc.file_name,
-          date: formatDate(doc.created_at),
-          size: '0.5 MB',
-        }));
-        setUploadedFiles(formatted);
-        setHasUploadedDocument(formatted.length > 0);
+      console.log('[Dashboard] Loading documents...');
+      if (!isAuthenticated) {
+        console.log('[Dashboard] Not authenticated, skipping document load');
         return;
       }
-
+      
       try {
+        const cachedDocs = get<DocumentUpload[]>('uploaded_documents');
+        if (cachedDocs && cachedDocs.length > 0) {
+          console.log('[Dashboard] Using cached documents:', cachedDocs.length);
+          const formatted = cachedDocs.map((doc: DocumentUpload) => ({
+            name: doc.file_name,
+            date: formatDate(doc.created_at),
+            size: '0.5 MB',
+          }));
+          setUploadedFiles(formatted);
+          setHasUploadedDocument(formatted.length > 0);
+          setIsDataLoaded(true);
+          return;
+        }
+
+        console.log('[Dashboard] Fetching documents from API...');
         const docs = await uploadAPI.getDocuments();
+        console.log('[Dashboard] Documents loaded:', docs.length);
         set('uploaded_documents', docs);
         const formatted = docs.map((doc: DocumentUpload) => ({
           name: doc.file_name,
@@ -866,8 +902,17 @@ export default function DashboardPage() {
         }));
         setUploadedFiles(formatted);
         setHasUploadedDocument(formatted.length > 0);
+        setIsDataLoaded(true);
       } catch (error) {
-        console.error('Error loading documents:', error);
+        // ✅ Handle 401 properly - AuthContext will handle redirect
+        if (axios.isAxiosError(error) && error.response?.status === 401) {
+          console.warn('[Dashboard] 401 error loading documents - auth will handle');
+          setIsDataLoaded(true);
+          return;
+        }
+        console.error('[Dashboard] Error loading documents:', error);
+        setLoadError('Failed to load documents');
+        setIsDataLoaded(true);
       }
     };
 
@@ -876,10 +921,12 @@ export default function DashboardPage() {
 
   // Redirect if not authenticated
   useEffect(() => {
-    if (!isAuthenticated) {
+    console.log('[Dashboard] Auth check:', { isAuthenticated, isLoading });
+    if (!isAuthenticated && !isLoading) {
+      console.warn('[Dashboard] Not authenticated, redirecting to login');
       router.push('/login');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isLoading, router]);
 
   const isKYCCompleteEffective = isKYCComplete || kycStatus === 'pending';
 
@@ -950,6 +997,7 @@ export default function DashboardPage() {
 
   // Handlers
   const handleNewAssessment = () => {
+    console.log('[Dashboard] New assessment requested');
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       toast.error('Please complete KYC first to run an assessment');
       openKYCModal();
@@ -964,13 +1012,14 @@ export default function DashboardPage() {
   };
 
   const handleAssessmentSubmit = async (data: AssessmentFormData) => {
+    console.log('[Dashboard] Submitting assessment...');
     setIsAssessmentLoading(true);
     try {
       await submitAssessment(data);
       setIsAssessmentModalOpen(false);
       toast.success('Assessment completed successfully! 🎉');
     } catch (error) {
-      console.error('Assessment failed:', error);
+      console.error('[Dashboard] Assessment failed:', error);
       toast.error('Assessment failed. Please try again.');
     } finally {
       setIsAssessmentLoading(false);
@@ -978,6 +1027,7 @@ export default function DashboardPage() {
   };
 
   const handleApplyLoan = () => {
+    console.log('[Dashboard] Apply for loan requested');
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       toast.error('Please complete KYC first to apply for a loan');
       openKYCModal();
@@ -1001,6 +1051,7 @@ export default function DashboardPage() {
   };
 
   const handleLoanSubmit = async (data: { amount: number; purpose: string; term_months: number }) => {
+    console.log('[Dashboard] Submitting loan application...');
     setIsLoanLoading(true);
     try {
       const latestAssessment = history[0] || assessment;
@@ -1022,7 +1073,7 @@ export default function DashboardPage() {
       toast.success('Loan application submitted successfully! 🎉');
       
     } catch (error) {
-      console.error('Loan application failed:', error);
+      console.error('[Dashboard] Loan application failed:', error);
       toast.error('Loan application failed. Please try again.');
     } finally {
       setIsLoanLoading(false);
@@ -1030,6 +1081,7 @@ export default function DashboardPage() {
   };
 
   const handleUploadClick = () => {
+    console.log('[Dashboard] Upload click');
     if (kycStatus === 'not_submitted' || kycStatus === 'rejected') {
       toast.error('Please complete KYC first to upload documents');
       openKYCModal();
@@ -1039,15 +1091,18 @@ export default function DashboardPage() {
   };
 
   const handleHistoryClick = () => {
+    console.log('[Dashboard] History click');
     router.push('/history');
   };
 
   const handleKYCSubmit = async (data: KYCFormData) => {
+    console.log('[Dashboard] Submitting KYC...');
     await submitKYC(data);
     await refreshUser();
   };
 
   const handleRefresh = async () => {
+    console.log('[Dashboard] Manual refresh requested');
     setIsRefreshing(true);
     try {
       await refreshUser();
@@ -1064,14 +1119,16 @@ export default function DashboardPage() {
       
       toast.success('Dashboard refreshed!');
     } catch (error) {
-      console.error('Error refreshing:', error);
+      console.error('[Dashboard] Error refreshing:', error);
       toast.error('Failed to refresh. Please try again.');
     } finally {
       setIsRefreshing(false);
     }
   };
 
+  // Show loading state
   if (isLoading || !isAuthenticated) {
+    console.log('[Dashboard] Showing loading state:', { isLoading, isAuthenticated });
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#F7F5F0]">
         <div className="text-center">
@@ -1082,6 +1139,29 @@ export default function DashboardPage() {
     );
   }
 
+  // Show error if load timed out
+  if (loadError) {
+    console.error('[Dashboard] Error state:', loadError);
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#F7F5F0]">
+        <div className="text-center max-w-md px-6">
+          <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
+            <FiAlertTriangle className="w-8 h-8 text-red-500" />
+          </div>
+          <h2 className="text-xl font-bold text-[#0B3B2E] mb-2">Something went wrong</h2>
+          <p className="text-[#8A8470] text-sm mb-6">{loadError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-[#1EA537] hover:bg-[#188A2D] text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+          >
+            Refresh page
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  console.log('[Dashboard] Rendering main dashboard content');
   return (
     <>
       <main className="px-4 lg:px-8 py-8 max-w-6xl w-full mx-auto bg-[#F7F5F0]">

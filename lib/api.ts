@@ -14,6 +14,30 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// ✅ Helper to clear auth cookie
+const clearAuthCookie = () => {
+  document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+};
+
+// ✅ Helper to clear all auth data
+const clearAuthData = () => {
+  // Clear localStorage
+  const keysToRemove = [
+    'access_token',
+    'credit_assessment',
+    'kyc_submitted',
+    'uploaded_files',
+    'assessment_history',
+    'risk_level',
+    'loans',
+    'loan_data'
+  ];
+  keysToRemove.forEach(key => localStorage.removeItem(key));
+  
+  // Clear cookie
+  clearAuthCookie();
+};
+
 export const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -35,15 +59,19 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor for error handling
+// ✅ Response interceptor with proper 401 handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // ✅ Handle 401 Unauthorized - Token expired/invalid
     if (error.response?.status === 401) {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('credit_assessment');
-      localStorage.removeItem('kyc_submitted');
-      window.location.href = '/login';
+      // Clear ALL auth data - both localStorage AND cookie
+      clearAuthData();
+      
+      // Only redirect if not already on login page
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -60,6 +88,8 @@ export const authAPI = {
     const response = await api.post('/auth/login', data);
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token);
+      // ✅ Set cookie too
+      document.cookie = `access_token=${response.data.access_token}; path=/; max-age=604800; SameSite=Lax`;
     }
     return response.data;
   },
@@ -147,9 +177,11 @@ export const uploadAPI = {
     return response.data;
   },
 
-  // ✅ Get all user documents - Properly typed
   getDocuments: async (): Promise<DocumentUpload[]> => {
     const response = await api.get('/upload/');
     return response.data;
   },
 };
+
+// ✅ Export clearAuthData for use in AuthContext
+export { clearAuthData, clearAuthCookie };
