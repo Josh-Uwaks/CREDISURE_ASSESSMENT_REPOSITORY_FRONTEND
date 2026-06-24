@@ -1,7 +1,7 @@
 // context/CacheContext.tsx
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 
 interface CacheItem<T = unknown> {
   data: T;
@@ -31,6 +31,11 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
   const [isInitialized, setIsInitialized] = useState(false);
   const cleanupIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isClearingRef = useRef(false);
+  const cacheRef = useRef(cache);
+  useEffect(() => {
+    cacheRef.current = cache;
+  }, [cache]);
+
   useEffect(() => {
     const loadCache = () => {
       try {
@@ -94,6 +99,53 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
     }
   }, [cache, isInitialized]);
 
+  const get = useCallback(<T,>(key: string): T | null => {
+    const currentCache = cacheRef.current;
+    const item = currentCache[key] as CacheItem<T> | undefined;
+    if (!item) return null;
+    
+    if (Date.now() - item.timestamp > item.expiresIn) {
+      setCache(prev => {
+        const newCache = { ...prev };
+        delete newCache[key];
+        return newCache;
+      });
+      localStorage.removeItem(`${CACHE_PREFIX}${key}`);
+      return null;
+    }
+    
+    return item.data;
+  }, []);
+
+  const set = useCallback(<T,>(key: string, data: T, expiresIn: number = DEFAULT_EXPIRY) => {
+    const currentCache = cacheRef.current;
+    
+    const currentKeys = Object.keys(currentCache);
+    if (currentKeys.length >= MAX_CACHE_ITEMS && !currentCache[key]) {
+      const oldestKey = currentKeys.reduce((a, b) => {
+        return currentCache[a].timestamp < currentCache[b].timestamp ? a : b;
+      });
+      
+      setCache(prev => {
+        const newCache = { ...prev };
+        delete newCache[oldestKey];
+        return newCache;
+      });
+      localStorage.removeItem(`${CACHE_PREFIX}${oldestKey}`);
+    }
+
+    const item: CacheItem<T> = {
+      data,
+      timestamp: Date.now(),
+      expiresIn,
+    };
+    
+    setCache(prev => ({
+      ...prev,
+      [key]: item as CacheItem,
+    }));
+  }, []);
+
   const clearExpired = useCallback(() => {
     if (isClearingRef.current) return;
     isClearingRef.current = true;
@@ -102,8 +154,9 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now();
       let hasChanges = false;
       const keysToRemove: string[] = [];
+      const currentCache = cacheRef.current;
 
-      for (const [key, item] of Object.entries(cache)) {
+      for (const [key, item] of Object.entries(currentCache)) {
         if (now - item.timestamp > item.expiresIn) {
           keysToRemove.push(key);
           localStorage.removeItem(`${CACHE_PREFIX}${key}`);
@@ -125,7 +178,37 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
     } finally {
       isClearingRef.current = false;
     }
-  }, [cache]);
+  }, []);
+
+  const isStale = useCallback((key: string): boolean => {
+    const currentCache = cacheRef.current;
+    const item = currentCache[key];
+    if (!item) return true;
+    return Date.now() - item.timestamp > item.expiresIn;
+  }, []);
+
+  const getSize = useCallback((): number => {
+    return Object.keys(cacheRef.current).length;
+  }, []);
+
+  const invalidate = useCallback((key: string) => {
+    setCache(prev => {
+      const newCache = { ...prev };
+      delete newCache[key];
+      return newCache;
+    });
+    localStorage.removeItem(`${CACHE_PREFIX}${key}`);
+  }, []);
+
+  const invalidateAll = useCallback(() => {
+    setCache({});
+    const keys = Object.keys(localStorage);
+    for (const key of keys) {
+      if (key.startsWith(CACHE_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -147,80 +230,7 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isInitialized, clearExpired]);
 
-  const get = useCallback(<T,>(key: string): T | null => {
-    const item = cache[key] as CacheItem<T> | undefined;
-    if (!item) return null;
-    
-    if (Date.now() - item.timestamp > item.expiresIn) {
-      setCache(prev => {
-        const newCache = { ...prev };
-        delete newCache[key];
-        return newCache;
-      });
-      localStorage.removeItem(`${CACHE_PREFIX}${key}`);
-      return null;
-    }
-    
-    return item.data;
-  }, [cache]);
-
-  const set = useCallback(<T,>(key: string, data: T, expiresIn: number = DEFAULT_EXPIRY) => {
-    const currentKeys = Object.keys(cache);
-    if (currentKeys.length >= MAX_CACHE_ITEMS && !cache[key]) {
-      const oldestKey = currentKeys.reduce((a, b) => {
-        return cache[a].timestamp < cache[b].timestamp ? a : b;
-      });
-      
-      setCache(prev => {
-        const newCache = { ...prev };
-        delete newCache[oldestKey];
-        return newCache;
-      });
-      localStorage.removeItem(`${CACHE_PREFIX}${oldestKey}`);
-    }
-
-    const item: CacheItem<T> = {
-      data,
-      timestamp: Date.now(),
-      expiresIn,
-    };
-    
-    setCache(prev => ({
-      ...prev,
-      [key]: item as CacheItem,
-    }));
-  }, [cache]);
-
-  const invalidate = useCallback((key: string) => {
-    setCache(prev => {
-      const newCache = { ...prev };
-      delete newCache[key];
-      return newCache;
-    });
-    localStorage.removeItem(`${CACHE_PREFIX}${key}`);
-  }, []); // ✅ Empty deps - no external state used
-
-  const invalidateAll = useCallback(() => {
-    setCache({});
-    const keys = Object.keys(localStorage);
-    for (const key of keys) {
-      if (key.startsWith(CACHE_PREFIX)) {
-        localStorage.removeItem(key);
-      }
-    }
-  }, []); // ✅ Empty deps - no external state used
-
-  const isStale = useCallback((key: string): boolean => {
-    const item = cache[key];
-    if (!item) return true;
-    return Date.now() - item.timestamp > item.expiresIn;
-  }, [cache]);
-
-  const getSize = useCallback((): number => {
-    return Object.keys(cache).length;
-  }, [cache]);
-
-  const value = useCallback((): CacheContextType => ({
+  const value = useMemo((): CacheContextType => ({
     get,
     set,
     invalidate,
@@ -231,7 +241,7 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
   }), [get, set, invalidate, invalidateAll, isStale, getSize, clearExpired]);
 
   return (
-    <CacheContext.Provider value={value()}>
+    <CacheContext.Provider value={value}>
       {children}
     </CacheContext.Provider>
   );

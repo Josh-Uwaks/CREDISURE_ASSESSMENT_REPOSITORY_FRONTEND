@@ -1,7 +1,7 @@
 // app/(dashboard)/dashboard/page.tsx
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useCache } from '@/context/CacheContext';
@@ -31,7 +31,6 @@ import {
 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
-// ====== TYPES ======
 type AssessmentFormData = z.infer<typeof assessmentSchema>;
 
 interface UploadedFile {
@@ -61,8 +60,6 @@ interface LoanData {
 
 type JourneyStatus = 'completed' | 'active' | 'pending' | 'blocked';
 
-// ====== SHARED HELPERS ======
-
 const formatDate = (dateString: string) =>
   new Date(dateString).toLocaleDateString('en-GB', {
     day: 'numeric',
@@ -78,8 +75,6 @@ const formatDateTime = (dateString: string) =>
     hour: '2-digit',
     minute: '2-digit',
   });
-
-// ====== JOURNEY STRIP ======
 
 interface JourneyStep {
   id: string;
@@ -148,8 +143,6 @@ function JourneyStrip({ steps }: { steps: JourneyStep[] }) {
     </div>
   );
 }
-
-// ====== STATUS NOTICE ======
 
 interface StatusNoticeProps {
   kycStatus: string | null;
@@ -248,8 +241,6 @@ function StatusNotice({ kycStatus, isKYCComplete, onVerify, onRefresh, isRefresh
     </div>
   );
 }
-
-// ====== CREDIT SCORE HERO ======
 
 interface CreditHeroProps {
   creditScore: number | null;
@@ -356,8 +347,6 @@ function CreditHero({
   );
 }
 
-// ====== LOAN SECTION ======
-
 interface LoanSectionProps {
   loan: LoanData | null;
   onApply: () => void;
@@ -367,13 +356,13 @@ interface LoanSectionProps {
   isKYCComplete: boolean;
 }
 
-function LoanSection({ 
-  loan, 
-  onApply, 
-  creditScore, 
-  hasAssessment, 
+function LoanSection({
+  loan,
+  onApply,
+  creditScore,
+  hasAssessment,
   hasUploadedDocument,
-  isKYCComplete 
+  isKYCComplete,
 }: LoanSectionProps) {
   const getLoanStatusDisplay = () => {
     if (!loan || loan.status === null || loan.status === 'no_application') {
@@ -809,6 +798,9 @@ export default function DashboardPage() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // ✅ Use ref to track if documents have been loaded
+  const hasLoadedDocsRef = useRef(false);
+
   // ✅ LOADING TIMEOUT - Prevents infinite loading
   useEffect(() => {
     console.log('[Dashboard] Loading timeout check:', { isDataLoaded, isLoading });
@@ -820,7 +812,7 @@ export default function DashboardPage() {
         setLoadError('Loading took too long. Please refresh the page.');
         toast.error('Loading took too long. Please refresh.');
       }
-    }, 15000); // 15 seconds timeout
+    }, 15000);
 
     return () => clearTimeout(timeout);
   }, [isDataLoaded, isLoading]);
@@ -867,9 +859,15 @@ export default function DashboardPage() {
     return history.length > 0 || !!assessment;
   }, [history, assessment]);
 
-  // Load documents
+  // ✅ FIXED: Load documents - ONLY ONCE with ref guard
   useEffect(() => {
     const loadDocuments = async () => {
+      // ✅ Skip if already loaded
+      if (hasLoadedDocsRef.current) {
+        console.log('[Dashboard] Documents already loaded, skipping');
+        return;
+      }
+      
       console.log('[Dashboard] Loading documents...');
       if (!isAuthenticated) {
         console.log('[Dashboard] Not authenticated, skipping document load');
@@ -877,6 +875,7 @@ export default function DashboardPage() {
       }
       
       try {
+        // ✅ Check cache first
         const cachedDocs = get<DocumentUpload[]>('uploaded_documents');
         if (cachedDocs && cachedDocs.length > 0) {
           console.log('[Dashboard] Using cached documents:', cachedDocs.length);
@@ -888,6 +887,7 @@ export default function DashboardPage() {
           setUploadedFiles(formatted);
           setHasUploadedDocument(formatted.length > 0);
           setIsDataLoaded(true);
+          hasLoadedDocsRef.current = true;
           return;
         }
 
@@ -903,8 +903,8 @@ export default function DashboardPage() {
         setUploadedFiles(formatted);
         setHasUploadedDocument(formatted.length > 0);
         setIsDataLoaded(true);
+        hasLoadedDocsRef.current = true;
       } catch (error) {
-        // ✅ Handle 401 properly - AuthContext will handle redirect
         if (axios.isAxiosError(error) && error.response?.status === 401) {
           console.warn('[Dashboard] 401 error loading documents - auth will handle');
           setIsDataLoaded(true);
@@ -917,7 +917,14 @@ export default function DashboardPage() {
     };
 
     loadDocuments();
-  }, [isAuthenticated, get, set]);
+  }, [isAuthenticated, get, set]); // ✅ Keep dependencies, but ref prevents re-runs
+
+  // ✅ Reset the ref when user logs out
+  useEffect(() => {
+    if (!isAuthenticated) {
+      hasLoadedDocsRef.current = false;
+    }
+  }, [isAuthenticated]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -1107,6 +1114,9 @@ export default function DashboardPage() {
     try {
       await refreshUser();
       
+      // ✅ Reset document load ref so it can reload
+      hasLoadedDocsRef.current = false;
+      
       const docs = await uploadAPI.getDocuments();
       set('uploaded_documents', docs);
       const formatted = docs.map((doc: DocumentUpload) => ({
@@ -1116,6 +1126,7 @@ export default function DashboardPage() {
       }));
       setUploadedFiles(formatted);
       setHasUploadedDocument(formatted.length > 0);
+      hasLoadedDocsRef.current = true;
       
       toast.success('Dashboard refreshed!');
     } catch (error) {

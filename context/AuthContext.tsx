@@ -5,7 +5,6 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import axios, { AxiosError } from 'axios';
-
 import { authAPI, kycAPI, assessmentAPI, loanAPI, clearAuthData } from '@/lib/api';
 import { KYCFormData, AssessmentFormData } from '@/lib/validation';
 import {
@@ -61,11 +60,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<'assessment' | 'upload' | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
+  
   const [kycData, setKycData] = useState<KYCResponse | null>(null);
   const [showKYCModal, setShowKYCModal] = useState(false);
   const [isKYCLoading, setIsKYCLoading] = useState(false);
   const [kycStatus, setKycStatus] = useState<KYCStatus>('not_submitted');
   const [kycStatusInfo, setKycStatusInfo] = useState<KYCStatusResponse | null>(null);
+  
   const [assessment, setAssessment] = useState<AssessmentResponse | null>(null);
   const [history, setHistory] = useState<AssessmentHistory[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'history'>('overview');
@@ -455,7 +456,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
             setToken(null);
             setIsLoading(false);
             setAuthInitialized(true);
-            // Don't redirect here - let middleware handle it
             return;
           }
           
@@ -473,7 +473,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
           await loadAllData(false, finalToken);
         } else {
           console.log('[AuthContext] No token found');
-          // ✅ No token - clear cookie just in case
           removeCookie('access_token');
         }
       } catch (error) {

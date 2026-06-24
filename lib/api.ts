@@ -1,27 +1,24 @@
 // lib/api.ts
 import axios from 'axios';
-import { 
-  AssessmentRequest, 
-  AssessmentResponse, 
+import {
+  AssessmentRequest,
+  AssessmentResponse,
   AssessmentHistory,
   KYCData,
   KYCResponse,
   KYCStatusResponse,
   LoanApplicationData,
   LoanResponse,
-  DocumentUpload
+  DocumentUpload,
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// ✅ Helper to clear auth cookie
 const clearAuthCookie = () => {
   document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
 };
 
-// ✅ Helper to clear all auth data
 const clearAuthData = () => {
-  // Clear localStorage
   const keysToRemove = [
     'access_token',
     'credit_assessment',
@@ -30,11 +27,10 @@ const clearAuthData = () => {
     'assessment_history',
     'risk_level',
     'loans',
-    'loan_data'
+    'loan_data',
   ];
-  keysToRemove.forEach(key => localStorage.removeItem(key));
-  
-  // Clear cookie
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
+
   clearAuthCookie();
 };
 
@@ -45,7 +41,6 @@ export const api = axios.create({
   },
 });
 
-// Request interceptor to add JWT token
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token');
@@ -59,16 +54,12 @@ api.interceptors.request.use(
   }
 );
 
-// ✅ Response interceptor with proper 401 handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // ✅ Handle 401 Unauthorized - Token expired/invalid
     if (error.response?.status === 401) {
-      // Clear ALL auth data - both localStorage AND cookie
       clearAuthData();
-      
-      // Only redirect if not already on login page
+
       if (!window.location.pathname.includes('/login')) {
         window.location.href = '/login';
       }
@@ -77,7 +68,6 @@ api.interceptors.response.use(
   }
 );
 
-// Auth API
 export const authAPI = {
   register: async (data: { email: string; password: string }) => {
     const response = await api.post('/auth/register', data);
@@ -88,14 +78,12 @@ export const authAPI = {
     const response = await api.post('/auth/login', data);
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token);
-      // ✅ Set cookie too
       document.cookie = `access_token=${response.data.access_token}; path=/; max-age=604800; SameSite=Lax`;
     }
     return response.data;
   },
 };
 
-// KYC API
 export const kycAPI = {
   submitKYC: async (data: KYCData): Promise<KYCResponse> => {
     const response = await api.post('/kyc', data);
@@ -113,7 +101,7 @@ export const kycAPI = {
           status: 'not_submitted',
           submitted_at: null,
           updated_at: null,
-          full_name: null
+          full_name: null,
         };
       }
       throw error;
@@ -127,10 +115,9 @@ export const kycAPI = {
     } catch {
       return false;
     }
-  }
+  },
 };
 
-// Assessment API
 export const assessmentAPI = {
   createAssessment: async (data: AssessmentRequest): Promise<AssessmentResponse> => {
     const response = await api.post('/assessment/', data);
@@ -143,7 +130,6 @@ export const assessmentAPI = {
   },
 };
 
-// Loan API
 export const loanAPI = {
   createLoan: async (data: LoanApplicationData): Promise<LoanResponse> => {
     const response = await api.post('/loans/', data);
@@ -156,7 +142,6 @@ export const loanAPI = {
   },
 };
 
-// Upload API
 export const uploadAPI = {
   uploadDocument: async (file: File, documentType: string = 'bank_statement'): Promise<DocumentUpload> => {
     const formData = new FormData();
@@ -183,5 +168,4 @@ export const uploadAPI = {
   },
 };
 
-// ✅ Export clearAuthData for use in AuthContext
 export { clearAuthData, clearAuthCookie };
